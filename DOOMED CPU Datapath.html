@@ -1,0 +1,864 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>DOOMED CPU Datapath</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a drawing sheet. Title block header, one wide schematic with an instruction tracer, then reference tables. */
+:root{
+  --paper:#eef1f3; --sheet:#fbfcfd; --ink:#16202a; --muted:#596674; --rule:#cdd5dc; --grid:#d6dde3;
+  --ctl:#2350c2; --trace:#c46200; --unused:#97a3af; --hi:#fdf0de;
+  --f-disp:"Archivo","Arial Narrow",system-ui,sans-serif;
+  --f-body:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"SFMono-Regular",Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0e1317; --sheet:#141b21; --ink:#d8e1e9; --muted:#8e9ba8; --rule:#2a343d; --grid:#222c34;
+    --ctl:#82a6ff; --trace:#ffab3f; --unused:#56626e; --hi:#2d2416; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0e1317; --sheet:#141b21; --ink:#d8e1e9; --muted:#8e9ba8; --rule:#2a343d; --grid:#222c34;
+  --ctl:#82a6ff; --trace:#ffab3f; --unused:#56626e; --hi:#2d2416; color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink);
+  font:15px/1.55 var(--f-body);
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+  padding-block:28px 64px;
+}
+.wrap{max-width:1280px; margin:0 auto; display:flex; flex-direction:column; gap:40px}
+code,pre,.mono{font-family:var(--f-mono); font-size:.86em}
+p{margin:0}
+.prose{max-width:70ch}
+
+/* title block */
+.tb{display:grid; grid-template-columns:2.2fr repeat(4, minmax(0,1fr)); border:1.5px solid var(--ink); background:var(--sheet)}
+.tb > div{padding:10px 14px; border-left:1px solid var(--ink); display:flex; flex-direction:column; gap:2px; min-width:0}
+.tb > div:first-child{border-left:0}
+.lbl{font:600 10.5px/1.2 var(--f-disp); letter-spacing:.12em; text-transform:uppercase; color:var(--muted)}
+.val{font-family:var(--f-mono); font-size:13px}
+h1{margin:0; font:800 clamp(1.7rem, 3.6vw, 2.5rem)/1.05 var(--f-disp); font-stretch:75%; letter-spacing:.01em; text-wrap:balance}
+@media (max-width: 860px){
+  .tb{grid-template-columns:1fr 1fr}
+  .tb > div{border-left:0; border-top:1px solid var(--ink)}
+  .tb > div:nth-child(even){border-left:1px solid var(--ink)}
+  .tb > div:first-child{grid-column:1 / -1; border-top:0}
+  .tb > div:nth-child(2){border-left:0}
+  .tb > div:nth-child(3){border-left:1px solid var(--ink)}
+  .tb > div:nth-child(4){border-left:0}
+  .tb > div:nth-child(5){border-left:1px solid var(--ink)}
+}
+
+h2{margin:0 0 14px; font:700 1.05rem/1.2 var(--f-disp); font-stretch:85%; letter-spacing:.08em; text-transform:uppercase}
+section{display:flex; flex-direction:column; gap:14px; min-width:0}
+section > h2{margin:0}
+
+/* tracer */
+.tracer{display:flex; flex-direction:column; gap:12px}
+.picker{display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center}
+.pgroup{display:flex; gap:4px; flex-wrap:wrap; align-items:center}
+.pgroup .lbl{margin-right:4px}
+.picker button{
+  font:500 13px/1 var(--f-mono); color:var(--ink); background:var(--sheet);
+  border:1px solid var(--rule); padding:8px 11px; cursor:pointer; border-radius:2px;
+}
+.picker button:hover{border-color:var(--ink)}
+.picker button[aria-pressed="true"]{background:var(--ink); color:var(--sheet); border-color:var(--ink)}
+.picker button:focus-visible{outline:2px solid var(--ctl); outline-offset:2px}
+
+.panel{background:var(--sheet); border:1px solid var(--rule); padding:14px 16px; display:grid; grid-template-columns:minmax(0, 340px) minmax(0,1fr); gap:10px 28px; align-items:start}
+.p-head{display:flex; align-items:baseline; gap:10px; flex-wrap:wrap}
+.p-mn{font:800 1.6rem/1 var(--f-disp); font-stretch:75%}
+.chip{font:600 11px/1 var(--f-disp); letter-spacing:.1em; text-transform:uppercase; border:1px solid var(--ink); padding:4px 6px 3px; border-radius:2px}
+.chip:empty{display:none}
+.p-hex{font-family:var(--f-mono); font-size:13px; color:var(--muted)}
+.p-rtl{font-family:var(--f-mono); font-size:15px; font-weight:600}
+.p-txt{color:var(--ink); max-width:68ch}
+.p-right{display:flex; flex-direction:column; gap:8px; min-width:0}
+.bits{display:grid; grid-template-columns:repeat(16, minmax(0,1fr)); gap:3px; margin-top:10px}
+.bits:empty{display:none}
+.bg{grid-column:span var(--s); border-top:2px solid var(--ink); padding-top:4px; display:flex; flex-direction:column; gap:1px; min-width:0}
+.bv{font:600 13px/1.2 var(--f-mono); letter-spacing:.08em}
+.bl{font:11px/1.2 var(--f-mono); color:var(--muted); overflow-wrap:anywhere}
+@media (max-width: 760px){ .panel{grid-template-columns:1fr} }
+
+.fig{margin:0; display:flex; flex-direction:column; gap:10px}
+.fig-scroll{
+  overflow-x:auto; border:1px solid var(--rule);
+  background-color:var(--sheet);
+  background-image:radial-gradient(var(--grid) 1px, transparent 1.2px);
+  background-size:20px 20px;
+}
+.dg{display:block; width:100%; min-width:1040px; height:auto; color:var(--ink); font-family:var(--f-mono)}
+.scroll-hint{display:none; font-size:12px; color:var(--muted)}
+@media (max-width: 1080px){ .scroll-hint{display:block} }
+figcaption{font-size:13.5px; color:var(--muted); max-width:90ch}
+
+/* svg styling */
+.dg text{fill:var(--ink)}
+.dg .blk{fill:var(--sheet); stroke:var(--ink); stroke-width:1.4}
+.dg .mux{fill:var(--sheet); stroke:var(--ink); stroke-width:1.4}
+.dg .clk{fill:none; stroke:var(--ink); stroke-width:1.2}
+.dg .wire{fill:none; stroke:var(--ink); stroke-width:1.5; stroke-linejoin:round}
+.dg .wire.unused{stroke:var(--unused); stroke-dasharray:2 3}
+.dg .ctlw{fill:none; stroke:var(--ctl); stroke-width:1.3; stroke-dasharray:5 3}
+.dg .dot{fill:var(--ink)}
+.dg .t-blk{font:700 13px var(--f-disp); font-stretch:90%}
+.dg .t-sub{font:10.5px var(--f-mono); fill:var(--muted)}
+.dg .t-pin{font:10px var(--f-mono); fill:var(--muted)}
+.dg .t-tiny{font:9px var(--f-mono); fill:var(--muted)}
+.dg .t-sig{font:10.5px var(--f-mono)}
+.dg .t-ctl{font:10.5px var(--f-mono); fill:var(--ctl)}
+.dg .t-band{font:600 10px var(--f-disp); letter-spacing:.14em; fill:var(--muted)}
+.ah-ink{fill:var(--ink)} .ah-on{fill:var(--trace)} .ah-ctl{fill:var(--ctl)} .ah-mute{fill:var(--unused)}
+
+.dg .k, .dg .ctlw, .dg .t-ctl{transition:opacity .18s ease, stroke .18s ease}
+.dg.focus .k.off{opacity:.13}
+.dg.focus .wire.k.on{stroke:var(--trace); stroke-width:2.7}
+.dg.focus .wire.k.on[marker-end]{marker-end:url(#ah-on)}
+.dg.focus .dot.k.on{fill:var(--trace)}
+.dg.focus g.k.on .blk, .dg.focus g.k.on .mux{stroke:var(--trace); stroke-width:2.2}
+.dg.focus .lo{opacity:.28}
+@media (prefers-reduced-motion: reduce){ .dg .k, .dg .ctlw, .dg .t-ctl{transition:none} }
+
+.legend{display:flex; flex-wrap:wrap; gap:8px 22px; font-size:13px; color:var(--muted)}
+.legend span{display:inline-flex; align-items:center; gap:8px}
+.legend svg{width:34px; height:12px; flex:none}
+.lg-ink{stroke:var(--ink); fill:none; stroke-width:1.6}
+.lg-ctl{stroke:var(--ctl); fill:none; stroke-width:1.4; stroke-dasharray:5 3}
+.lg-un{stroke:var(--unused); fill:none; stroke-width:1.6; stroke-dasharray:2 3}
+.lg-on{stroke:var(--trace); fill:none; stroke-width:2.8}
+.lg-dot{fill:var(--ink)}
+
+/* formats */
+.fmt{display:grid; grid-template-columns:4.6rem minmax(0,1fr); gap:6px 12px; align-items:center; max-width:900px}
+.ruler, .fields{display:grid; grid-template-columns:repeat(16, minmax(0,1fr))}
+.ruler span{font:11px var(--f-mono); color:var(--muted); text-align:center}
+.fmt-name{font:700 13px var(--f-disp); font-stretch:85%; letter-spacing:.06em; text-transform:uppercase}
+.fields span{grid-column:span var(--s); border:1.5px solid var(--ink); margin-left:-1.5px; padding:9px 4px; text-align:center; font:600 12.5px/1.1 var(--f-mono); background:var(--sheet); min-width:0; overflow-wrap:anywhere}
+.fields span:first-child{margin-left:0}
+.fields .op{background:var(--paper)}
+
+.grid2{display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:28px 40px}
+@media (max-width: 900px){ .grid2{grid-template-columns:1fr} }
+
+.tbl-wrap{overflow-x:auto; max-width:100%}
+table{border-collapse:collapse; font-size:13.5px; width:100%}
+th,td{text-align:left; padding:7px 12px 7px 0; border-bottom:1px solid var(--rule); vertical-align:top}
+th{font:600 10.5px/1.3 var(--f-disp); letter-spacing:.1em; text-transform:uppercase; color:var(--muted); border-bottom:1.5px solid var(--ink); white-space:nowrap}
+td code, td.mono{font-size:12.5px}
+.ctl-t td, .ctl-t th{text-align:center; padding-right:6px; padding-left:6px}
+.ctl-t td:first-child, .ctl-t th:first-child, .ctl-t td:nth-child(2), .ctl-t th:nth-child(2){text-align:left}
+.ctl-t td{font-family:var(--f-mono); font-variant-numeric:tabular-nums}
+.one{font-weight:700}
+.zero{color:var(--muted)}
+tr.sel td{background:var(--hi)}
+.note{font-size:13px; color:var(--muted)}
+
+pre{margin:0; background:var(--sheet); border:1px solid var(--rule); padding:14px 16px; overflow-x:auto; line-height:1.6; font-size:12.5px}
+
+h3{margin:0; font:700 .85rem/1.2 var(--f-disp); font-stretch:85%; letter-spacing:.1em; text-transform:uppercase; color:var(--muted)}
+.glance{display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:0 28px; border-top:1.5px solid var(--ink)}
+.glance > div{padding:10px 0; border-bottom:1px solid var(--rule); display:flex; flex-direction:column; gap:3px; min-width:0}
+.glance .val{font-size:13px}
+
+ul.dec{margin:0; padding:0; list-style:none; display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:18px 40px}
+ul.dec li{border-top:1px solid var(--rule); padding-top:11px; display:flex; flex-direction:column; gap:6px; min-width:0}
+ul.dec b{font:700 15.5px/1.3 var(--f-disp); font-stretch:88%}
+ul.dec .to{font-size:13.5px; color:var(--muted)}
+ul.dec .to span{font:600 10.5px/1 var(--f-disp); letter-spacing:.1em; text-transform:uppercase; color:var(--ink); margin-right:6px}
+@media (max-width: 760px){ ul.dec{grid-template-columns:1fr} }
+.cmp-t td:first-child{font:600 13px var(--f-disp); font-stretch:90%; white-space:nowrap}
+.cmp-t td:nth-child(2){color:var(--muted)}
+</style>
+
+<div class="wrap">
+
+<header class="tb">
+  <div><span class="lbl">Drawing</span><h1>DOOMED CPU Datapath</h1></div>
+  <div><span class="lbl">Top module</span><span class="val">top_wire · top.sv</span></div>
+  <div><span class="lbl">ISA</span><span class="val">16-bit · 10 instructions</span></div>
+  <div><span class="lbl">Timing</span><span class="val">single-cycle</span></div>
+  <div><span class="lbl">Rev · date</span><span class="val">1.0 · 2026-10-27</span></div>
+</header>
+
+<p class="prose">How <code>top.sv</code> connects the seven modules (PC, instruction ROM, decoder, control, register file, ALU and data memory), the 16-bit ISA they implement, and the design decisions behind both. Every wire label is the <code>_loc</code> signal name from the source, so you can match the drawing line for line against the glue logic further down.</p>
+
+<section class="tracer" aria-label="Datapath">
+  <div class="picker" role="group" aria-label="Trace an instruction">
+    <div class="pgroup"><button type="button" id="b-all" data-i="all" aria-pressed="true">All wires</button></div>
+    <div class="pgroup"><span class="lbl">R</span>
+      <button type="button" id="b-add" data-i="add" aria-pressed="false">add</button>
+      <button type="button" id="b-sub" data-i="sub" aria-pressed="false">sub</button>
+      <button type="button" id="b-sll" data-i="sll" aria-pressed="false">sll</button>
+      <button type="button" id="b-and" data-i="and" aria-pressed="false">and</button>
+    </div>
+    <div class="pgroup"><span class="lbl">I</span>
+      <button type="button" id="b-lw" data-i="lw" aria-pressed="false">lw</button>
+      <button type="button" id="b-sw" data-i="sw" aria-pressed="false">sw</button>
+      <button type="button" id="b-addi" data-i="addi" aria-pressed="false">addi</button>
+      <button type="button" id="b-beq" data-i="beq" aria-pressed="false">beq</button>
+      <button type="button" id="b-bne" data-i="bne" aria-pressed="false">bne</button>
+    </div>
+    <div class="pgroup"><span class="lbl">J</span>
+      <button type="button" id="b-jmp" data-i="jmp" aria-pressed="false">jmp</button>
+    </div>
+  </div>
+
+  <div class="panel" aria-live="polite">
+    <div>
+      <div class="p-head"><span class="p-mn" id="p-mn">All wires</span><span class="chip" id="p-type"></span><span class="p-hex" id="p-hex"></span></div>
+      <div class="bits" id="p-bits"></div>
+    </div>
+    <div class="p-right">
+      <p class="p-rtl" id="p-rtl"></p>
+      <p class="p-txt" id="p-txt">Every wire in top.sv. Pick an instruction to light up the wires it uses. The blue control labels switch to the values that instruction sets.</p>
+    </div>
+  </div>
+
+  <figure class="fig">
+    <div class="fig-scroll">
+<svg class="dg" id="dg" viewBox="0 0 1220 700" role="img" aria-label="Single-cycle datapath of top_wire. PC addresses the instruction ROM. The decoder sends opcode and funct4 to control and the register fields to the register file. Read port 1 and the OpB mux feed the ALU, whose result addresses data memory and feeds the write-back mux back into the register file. A next-PC mux picks PC plus 1, PC plus the sign-extended immediate, or the jump address.">
+  <defs>
+    <marker id="ah" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah-ink" d="M0,0.5 L8,4 L0,7.5 z"/></marker>
+    <marker id="ah-on" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="9" markerHeight="9" markerUnits="userSpaceOnUse" orient="auto"><path class="ah-on" d="M0,0.5 L8,4 L0,7.5 z"/></marker>
+    <marker id="ah-ctl" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path class="ah-ctl" d="M0,0.5 L8,4 L0,7.5 z"/></marker>
+    <marker id="ah-mute" viewBox="0 0 8 8" refX="8" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto"><path class="ah-mute" d="M0,0.5 L8,4 L0,7.5 z"/></marker>
+  </defs>
+
+  <!-- ===== blocks ===== -->
+  <g class="k" data-k="fetch">
+    <rect class="blk" x="470" y="24" width="330" height="76"/>
+    <text class="t-blk" x="640" y="58" text-anchor="middle">Control</text>
+    <text class="t-sub" x="640" y="76" text-anchor="middle">pnp · control.sv</text>
+    <text class="t-pin" x="477" y="54">Opcode</text>
+    <text class="t-pin" x="477" y="84">funct4</text>
+  </g>
+
+  <g class="k" data-k="fetch">
+    <rect class="blk" x="50" y="270" width="80" height="80"/>
+    <text class="t-blk" x="90" y="306" text-anchor="middle">PC</text>
+    <text class="t-sub" x="90" y="323" text-anchor="middle">ad · PrgCo</text>
+    <polyline class="clk" points="82,350 90,341 98,350"/>
+  </g>
+
+  <g class="k" data-k="fetch">
+    <rect class="blk" x="170" y="265" width="100" height="90"/>
+    <text class="t-blk" x="220" y="302" text-anchor="middle">Instr ROM</text>
+    <text class="t-sub" x="220" y="319" text-anchor="middle">dc · ROME</text>
+    <text class="t-sub" x="220" y="335" text-anchor="middle">128 × 16</text>
+  </g>
+
+  <g class="k" data-k="fetch">
+    <rect class="blk" x="320" y="190" width="110" height="250"/>
+    <text class="t-pin" x="350" y="205" text-anchor="middle">opcode</text>
+    <text class="t-pin" x="398" y="205" text-anchor="middle">funct4</text>
+    <text class="t-pin" x="424" y="274" text-anchor="end">rs [7:4]</text>
+    <text class="t-pin" x="424" y="314" text-anchor="end">rt/rd [11:8]</text>
+    <text class="t-pin" x="424" y="384" text-anchor="end">imm [3:0]</text>
+    <text class="t-pin" x="424" y="429" text-anchor="end">addr [11:0]</text>
+    <text class="t-blk" x="372" y="350" text-anchor="middle">Decoder</text>
+    <text class="t-sub" x="372" y="366" text-anchor="middle">tnt</text>
+  </g>
+
+  <g class="k" data-k="rf">
+    <rect class="blk" x="490" y="230" width="130" height="190"/>
+    <text class="t-pin" x="560" y="245" text-anchor="middle">we</text>
+    <text class="t-pin" x="497" y="274">rs1</text>
+    <text class="t-pin" x="497" y="314">rs2</text>
+    <text class="t-pin" x="497" y="344">rd</text>
+    <text class="t-pin" x="497" y="399">wd</text>
+    <text class="t-pin" x="613" y="274" text-anchor="end">rd1</text>
+    <text class="t-pin" x="613" y="364" text-anchor="end">rd2</text>
+    <text class="t-blk" x="562" y="322" text-anchor="middle">Registers</text>
+    <text class="t-sub" x="562" y="338" text-anchor="middle">npn · 16 × 16</text>
+    <polyline class="clk" points="547,420 555,411 563,420"/>
+  </g>
+
+  <g class="k" data-k="rd1">
+    <polygon class="mux" points="670,250 694,262 694,308 670,320"/>
+    <text class="t-tiny" x="674" y="273">0</text>
+    <text class="t-tiny" x="674" y="303">1</text>
+  </g>
+
+  <g class="k" data-k="rd2b imm">
+    <polygon class="mux" points="670,340 694,352 694,398 670,410"/>
+    <text class="t-tiny" x="674" y="363">0</text>
+    <text class="t-tiny" x="674" y="393">1</text>
+  </g>
+
+  <g class="k" data-k="alu">
+    <polygon class="blk" points="740,250 820,290 820,370 740,410 740,345 755,330 740,315"/>
+    <text class="t-blk" x="791" y="328" text-anchor="middle">ALU</text>
+    <text class="t-sub" x="791" y="344" text-anchor="middle">tsmc</text>
+    <text class="t-pin" x="745" y="289">A</text>
+    <text class="t-pin" x="745" y="379">B</text>
+  </g>
+
+  <g class="k" data-k="zero">
+    <rect class="blk" x="827" y="425" width="36" height="24"/>
+    <text class="t-sig" x="845" y="441" text-anchor="middle">=0</text>
+  </g>
+
+  <g class="k" data-k="mem">
+    <rect class="blk" x="920" y="270" width="110" height="150"/>
+    <text class="t-pin" x="975" y="285" text-anchor="middle">we</text>
+    <text class="t-pin" x="927" y="334">addr</text>
+    <text class="t-pin" x="927" y="394">dat</text>
+    <text class="t-pin" x="1023" y="334" text-anchor="end">out</text>
+    <text class="t-blk" x="975" y="362" text-anchor="middle">Data Mem</text>
+    <text class="t-sub" x="975" y="378" text-anchor="middle">meme · 128×16</text>
+    <polyline class="clk" points="967,420 975,411 983,420"/>
+  </g>
+
+  <g class="k" data-k="wd">
+    <polygon class="mux" points="1085,270 1109,282 1109,378 1085,390"/>
+  </g>
+
+  <text class="t-band" x="44" y="522">NEXT-PC LOGIC</text>
+
+  <g class="k" data-k="pc1">
+    <rect class="blk" x="180" y="530" width="56" height="36"/>
+    <text class="t-blk" x="208" y="553" text-anchor="middle">+1</text>
+  </g>
+
+  <g class="k" data-k="br">
+    <rect class="blk" x="480" y="580" width="100" height="40"/>
+    <text class="t-sig" x="530" y="604" text-anchor="middle">+ sext(imm)</text>
+  </g>
+
+  <g class="k" data-k="take">
+    <rect class="blk" x="780" y="502" width="130" height="36"/>
+    <text class="t-blk" x="845" y="517" text-anchor="middle">take</text>
+    <text class="t-pin" x="845" y="532" text-anchor="middle">Br &amp; (z ^ op[0])</text>
+  </g>
+
+  <g class="k" data-k="npc">
+    <polygon class="mux" points="1160,530 1184,542 1184,648 1160,660"/>
+    <text class="t-tiny" x="1164" y="551">0</text>
+    <text class="t-tiny" x="1164" y="603">1</text>
+    <text class="t-tiny" x="1164" y="643">2</text>
+  </g>
+
+  <!-- ===== data wires ===== -->
+  <!-- fetch -->
+  <path class="wire k" data-k="fetch" d="M130,310 H170" marker-end="url(#ah)"/>
+  <path class="wire k" data-k="fetch" d="M270,310 H320" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="fetch" x="295" y="302" text-anchor="middle">IR_loc</text>
+  <circle class="dot k" data-k="fetch" cx="150" cy="310" r="3"/>
+
+  <!-- decoder to control -->
+  <path class="wire k" data-k="ctl" d="M350,190 V50 H470" marker-end="url(#ah)"/>
+  <path class="wire k" data-k="ctl" d="M398,190 V80 H470" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="ctl" x="410" y="44" text-anchor="middle">opcode_loc</text>
+  <text class="t-sig k" data-k="ctl" x="434" y="74" text-anchor="middle">funct4_loc</text>
+
+  <!-- register addresses -->
+  <path class="wire k" data-k="rs" d="M430,270 H490" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="rs" x="460" y="263" text-anchor="middle">rs1_loc</text>
+  <path class="wire k" data-k="rt rdw" d="M430,310 H465"/>
+  <path class="wire k" data-k="rt" d="M465,310 H490" marker-end="url(#ah)"/>
+  <path class="wire k" data-k="rdw" d="M465,310 V340 H490" marker-end="url(#ah)"/>
+  <circle class="dot k" data-k="rt rdw" cx="465" cy="310" r="3"/>
+  <text class="t-sig k" data-k="rt rdw" x="448" y="303" text-anchor="middle">rd_loc</text>
+
+  <!-- read port 1 to ALU A -->
+  <path class="wire k" data-k="rd1" d="M620,270 H670" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="rd1" x="645" y="263" text-anchor="middle">rd1_loc</text>
+  <path class="wire k" data-k="rd1" d="M694,285 H740" marker-end="url(#ah)"/>
+  <path class="wire unused k" data-k="never" d="M645,300 H670" marker-end="url(#ah-mute)"/>
+  <text class="t-pin k" data-k="never" x="641" y="304" text-anchor="end">PC</text>
+
+  <!-- read port 2 -->
+  <path class="wire k" data-k="rd2b dat" d="M620,360 H640"/>
+  <path class="wire k" data-k="rd2b" d="M640,360 H670" marker-end="url(#ah)"/>
+  <circle class="dot k" data-k="rd2b dat" cx="640" cy="360" r="3"/>
+  <text class="t-sig k" data-k="rd2b dat" x="645" y="353" text-anchor="middle">rd2_loc</text>
+
+  <!-- immediate -->
+  <path class="wire k" data-k="imm immbr" d="M430,380 H455 V455"/>
+  <path class="wire k" data-k="imm" d="M455,455 H655 V390 H670" marker-end="url(#ah)"/>
+  <path class="wire k" data-k="immbr" d="M455,455 V565 H530 V580" marker-end="url(#ah)"/>
+  <circle class="dot k" data-k="imm immbr" cx="455" cy="455" r="3"/>
+  <text class="t-sig k" data-k="imm" x="555" y="449" text-anchor="middle">imm_loc</text>
+
+  <!-- OpB -->
+  <path class="wire k" data-k="rd2b imm" d="M694,375 H740" marker-end="url(#ah)"/>
+
+  <!-- store data -->
+  <path class="wire k" data-k="dat" d="M640,360 V465 H900 V390 H920" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="dat" x="760" y="459" text-anchor="middle">dat_loc</text>
+
+  <!-- ALU result -->
+  <path class="wire k" data-k="res_mem res_wb zero" d="M820,330 H845"/>
+  <path class="wire k" data-k="res_mem res_wb" d="M845,330 H870"/>
+  <path class="wire k" data-k="res_mem" d="M870,330 H920" marker-end="url(#ah)"/>
+  <circle class="dot k" data-k="res_mem res_wb zero" cx="845" cy="330" r="3"/>
+  <circle class="dot k" data-k="res_mem res_wb" cx="870" cy="330" r="3"/>
+  <text class="t-sig k" data-k="res_mem" x="895" y="346" text-anchor="middle">res_loc</text>
+
+  <!-- zero detect -->
+  <path class="wire k" data-k="zero" d="M845,330 V425" marker-end="url(#ah)"/>
+  <path class="wire k" data-k="zero" d="M845,449 V502" marker-end="url(#ah)"/>
+
+  <!-- write-back inputs -->
+  <path class="wire k" data-k="res_wb" d="M870,330 V215 H1070 V290 H1085" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="res_wb" x="970" y="209" text-anchor="middle">res_loc</text>
+  <path class="wire k" data-k="mem_wb" d="M1030,330 H1085" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="mem_wb" x="1052" y="323" text-anchor="middle">mem_dat</text>
+
+  <!-- write-back to register file -->
+  <path class="wire k" data-k="wd" d="M1109,330 H1135 V490 H475 V395 H490" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="wd" x="1139" y="420">wd_loc</text>
+
+  <!-- PC fan-out to next-PC logic -->
+  <path class="wire k" data-k="pc1 br" d="M150,310 V548"/>
+  <path class="wire k" data-k="pc1" d="M150,548 H180" marker-end="url(#ah)"/>
+  <path class="wire k" data-k="br" d="M150,548 V600 H480" marker-end="url(#ah)"/>
+  <circle class="dot k" data-k="pc1 br" cx="150" cy="548" r="3"/>
+  <text class="t-sig k" data-k="pc1 br" x="156" y="430">PC_loc</text>
+
+  <!-- PC+1 -->
+  <path class="wire k" data-k="pc1 pc1wb" d="M236,548 H1060"/>
+  <path class="wire k" data-k="pc1" d="M1060,548 H1160" marker-end="url(#ah)"/>
+  <circle class="dot k" data-k="pc1" cx="1060" cy="548" r="3"/>
+  <text class="t-sig k" data-k="pc1" x="330" y="542" text-anchor="middle">PC_plus1_loc</text>
+  <path class="wire unused k" data-k="never" d="M1060,548 V370 H1085" marker-end="url(#ah-mute)"/>
+  <text class="t-pin k" data-k="never" x="1056" y="446" text-anchor="end">PC+1</text>
+
+  <!-- branch target -->
+  <path class="wire k" data-k="br" d="M580,600 H1160" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="br" x="680" y="594" text-anchor="middle">br_tgt_loc</text>
+
+  <!-- jump address -->
+  <path class="wire k" data-k="jaddr" d="M430,425 H440 V640 H1160" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="jaddr" x="680" y="634" text-anchor="middle">{4'b0, jal_addr_loc}</text>
+
+  <!-- take -->
+  <path class="wire k" data-k="take" d="M738,530 H780" marker-end="url(#ah)"/>
+  <text class="t-pin" data-sig="op0" x="734" y="534" text-anchor="end">opcode[0]</text>
+  <path class="wire k" data-k="take" d="M910,520 H1166 V533" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="take" x="990" y="514" text-anchor="middle">take_loc</text>
+
+  <!-- next PC back to PC -->
+  <path class="wire k" data-k="npc" d="M1184,595 H1204 V680 H30 V310 H50" marker-end="url(#ah)"/>
+  <text class="t-sig k" data-k="npc" x="600" y="674" text-anchor="middle">next_PC_loc</text>
+
+  <!-- ===== control signals ===== -->
+  <path class="ctlw" data-cs="RegWrite" d="M560,100 V230" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="RegWrite" x="564" y="140">RegWrite</text>
+
+  <path class="ctlw" data-cs="AluSrcA" d="M682,100 V256" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="AluSrcA" x="678" y="122" text-anchor="end">AluSrcA</text>
+
+  <path class="ctlw" data-cs="AluSrc" d="M710,100 V330 H682 V346" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="AluSrc" x="714" y="122">AluSrc</text>
+
+  <path class="ctlw" data-cs="AluCtrl" d="M780,100 V270" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="AluCtrl" x="784" y="140">AluCtrl[3:0]</text>
+
+  <path class="ctlw" data-cs="MemWrite" d="M800,64 H975 V270" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="MemWrite" x="890" y="58" text-anchor="middle">MemWrite</text>
+
+  <path class="ctlw" data-cs="WB" d="M800,36 H1097 V276" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="WB" x="950" y="30" text-anchor="middle">MemToReg · Jump</text>
+
+  <path class="ctlw" data-cs="Branch" d="M738,512 H780" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="Branch" x="734" y="516" text-anchor="end">Branch</text>
+
+  <path class="ctlw" data-cs="Jump" d="M1178,500 V539" marker-end="url(#ah-ctl)"/>
+  <text class="t-ctl" data-sig="Jump" x="1174" y="510" text-anchor="end">Jump</text>
+</svg>
+    </div>
+    <span class="scroll-hint">Scroll sideways to see the whole sheet.</span>
+    <div class="legend">
+      <span><svg viewBox="0 0 34 12" aria-hidden="true"><path class="lg-ink" d="M2,6 H26"/><path class="lg-dot" d="M26,2 L32,6 L26,10 z"/></svg>Data or address wire</span>
+      <span><svg viewBox="0 0 34 12" aria-hidden="true"><path class="lg-ctl" d="M2,6 H32"/></svg>Control signal from pnp</span>
+      <span><svg viewBox="0 0 34 12" aria-hidden="true"><path class="lg-un" d="M2,6 H32"/></svg>Wired, but no instruction uses it yet</span>
+      <span><svg viewBox="0 0 34 12" aria-hidden="true"><path class="lg-on" d="M2,6 H32"/></svg>Used by the selected instruction</span>
+      <span><svg viewBox="0 0 34 12" aria-hidden="true"><circle class="lg-dot" cx="17" cy="6" r="3"/></svg>Junction</span>
+      <span><svg viewBox="0 0 34 12" aria-hidden="true"><polyline class="lg-ink" points="9,11 17,3 25,11"/></svg>Updates on posedge clk</span>
+    </div>
+    <figcaption>One instruction per clock. ROM, register reads and memory reads are combinational; the PC, the register write and the memory write all happen on the rising edge. The ALU is busy comparing during a branch, so the branch target gets its own adder.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>The ISA</h2>
+  <div class="glance">
+    <div><span class="lbl">Instruction</span><span class="val">16 bits, fixed width</span></div>
+    <div><span class="lbl">Opcode</span><span class="val">4 bits · 7 of 16 used</span></div>
+    <div><span class="lbl">Registers</span><span class="val">16 × 16-bit · r0 reads 0</span></div>
+    <div><span class="lbl">Formats</span><span class="val">R · I · J</span></div>
+    <div><span class="lbl">Addressing unit</span><span class="val">16-bit word · PC counts instructions</span></div>
+    <div><span class="lbl">Memories</span><span class="val">128-word ROM + 128-word RAM</span></div>
+    <div><span class="lbl">Operand modes</span><span class="val">register · 4-bit imm · base + offset · PC-relative · absolute</span></div>
+    <div><span class="lbl">Execution</span><span class="val">single-cycle, in order</span></div>
+  </div>
+  <h3>Formats</h3>
+  <div class="fmt" aria-label="16-bit instruction formats">
+    <span></span>
+    <div class="ruler" aria-hidden="true"><span>15</span><span>14</span><span>13</span><span>12</span><span>11</span><span>10</span><span>9</span><span>8</span><span>7</span><span>6</span><span>5</span><span>4</span><span>3</span><span>2</span><span>1</span><span>0</span></div>
+    <span class="fmt-name">R-type</span>
+    <div class="fields"><span class="op" style="--s:4">opcode</span><span style="--s:4">rt/rd</span><span style="--s:4">rs</span><span style="--s:4">funct</span></div>
+    <span class="fmt-name">I-type</span>
+    <div class="fields"><span class="op" style="--s:4">opcode</span><span style="--s:4">rt/rd</span><span style="--s:4">rs</span><span style="--s:4">imm</span></div>
+    <span class="fmt-name">J-type</span>
+    <div class="fields"><span class="op" style="--s:4">opcode</span><span style="--s:12">address</span></div>
+  </div>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Field</th><th>Bits</th><th>Wire in top.sv</th><th>Goes to</th></tr></thead>
+      <tbody>
+        <tr><td>opcode</td><td class="mono">[15:12]</td><td><code>opcode_loc</code></td><td>Control <code>pnp.Opcode</code>. Bit 0 also feeds <code>take_loc</code> to tell beq from bne.</td></tr>
+        <tr><td>rt/rd</td><td class="mono">[11:8]</td><td><code>rd_loc</code></td><td>Read port 2 <code>npn.rs2</code> and the write address <code>npn.rd</code>. It is both a source and the destination.</td></tr>
+        <tr><td>rs</td><td class="mono">[7:4]</td><td><code>rs1_loc</code></td><td>Read port 1 <code>npn.rs1</code>, which always drives ALU input A.</td></tr>
+        <tr><td>funct</td><td class="mono">[3:0]</td><td><code>funct4_loc</code></td><td>Control, which passes it straight to <code>AluCtrl</code> for R-type.</td></tr>
+        <tr><td>imm</td><td class="mono">[3:0]</td><td><code>imm_loc</code></td><td>The OpB mux, zero-extended (0 to 15), and the branch adder, sign-extended (−8 to +7).</td></tr>
+        <tr><td>address</td><td class="mono">[11:0]</td><td><code>jal_addr_loc</code></td><td>The next-PC mux as <code>{4'b0, addr}</code>. Only opcode 0110 gets this field.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>Instructions</h3>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Instr</th><th>Format</th><th>Opcode</th><th>Funct</th><th>Operation</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr><td><b>add</b></td><td>R</td><td class="mono">0000</td><td class="mono">0000</td><td><code>R[rd] ← R[rs] + R[rd]</code></td><td class="mono">0x0120</td></tr>
+        <tr><td><b>sub</b></td><td>R</td><td class="mono">0000</td><td class="mono">0001</td><td><code>R[rd] ← R[rs] − R[rd]</code></td><td class="mono">0x0211</td></tr>
+        <tr><td><b>sll</b></td><td>R</td><td class="mono">0000</td><td class="mono">0010</td><td><code>R[rd] ← R[rs] &lt;&lt; R[rd][3:0]</code></td><td class="mono">0x0322</td></tr>
+        <tr><td><b>and</b></td><td>R</td><td class="mono">0000</td><td class="mono">0011</td><td><code>R[rd] ← R[rs] &amp; R[rd]</code></td><td class="mono">0x0413</td></tr>
+        <tr><td><b>lw</b></td><td>I</td><td class="mono">0001</td><td class="mono zero">–</td><td><code>R[rd] ← M[R[rs] + imm]</code></td><td class="mono">0x1304</td></tr>
+        <tr><td><b>sw</b></td><td>I</td><td class="mono">0010</td><td class="mono zero">–</td><td><code>M[R[rs] + imm] ← R[rd]</code></td><td class="mono">0x2204</td></tr>
+        <tr><td><b>addi</b></td><td>I</td><td class="mono">0011</td><td class="mono zero">–</td><td><code>R[rd] ← R[rs] + imm</code></td><td class="mono">0x3105</td></tr>
+        <tr><td><b>beq</b></td><td>I</td><td class="mono">0100</td><td class="mono zero">–</td><td><code>if R[rs] = R[rd]: PC ← PC + sext(imm)</code></td><td class="mono">0x4232</td></tr>
+        <tr><td><b>bne</b></td><td>I</td><td class="mono">0101</td><td class="mono zero">–</td><td><code>if R[rs] ≠ R[rd]: PC ← PC + sext(imm)</code></td><td class="mono">0x567F</td></tr>
+        <tr><td><b>jmp</b></td><td>J</td><td class="mono">0110</td><td class="mono zero">–</td><td><code>PC ← addr</code></td><td class="mono">0x600F</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">rd is the rt/rd field. imm is zero-extended (0 to 15) unless written sext, which means sign-extended (−8 to +7). Anything that doesn't take a branch or jump does PC ← PC + 1. Funct codes 0100 to 1000 also work as R-type: slt, xor, srl, sra and or.</p>
+</section>
+
+<section>
+  <h2>Design decisions</h2>
+  <h3>ISA</h3>
+  <ul class="dec">
+    <li>
+      <b>Two-operand registers</b>
+      <p>The formats only have room for two register fields, so rt/rd is both a source and the destination. rs always drives read port 1 and ALU input A; rt/rd drives read port 2 and the write port. That one wiring serves every format: rs is the base for lw and sw, and rt/rd is the data for sw.</p>
+      <p class="to"><span>Trade-off</span>R-type overwrites one of its inputs, and operand order is fixed: sub gives rs − rd. To keep a value, copy it first.</p>
+    </li>
+    <li>
+      <b>Funct code is the ALU code</b>
+      <p>The ALU's op numbering matches the spec's funct codes (add 0000, sub 0001, sll 0010, and 0011), so control hands funct straight to AluCtrl with no translation table.</p>
+      <p class="to"><span>Bonus</span>Every other ALU op is reachable as an R-type too. slt, xor, srl, sra and or work without any change to control.</p>
+    </li>
+    <li>
+      <b>Word addressing</b>
+      <p>Memory is addressed in 16-bit words, not bytes. The PC counts instructions (PC + 1) and every load or store moves one full word.</p>
+      <p class="to"><span>Trade-off</span>No byte or character storage. In return, the byte lanes, misalignment checks and load sign-extension of the RV32I core all disappear.</p>
+    </li>
+    <li>
+      <b>Two readings of the 4-bit immediate</b>
+      <p>addi, lw and sw zero-extend it in the decoder (0 to 15). Branches sign-extend it in the branch adder (−8 to +7, counted from the branch itself), so loops can jump backwards.</p>
+      <p class="to"><span>Trade-off</span>addi can't load a negative constant (use sub against a register), and a branch reaches at most 8 instructions back or 7 forward. Longer jumps go through jmp.</p>
+    </li>
+    <li>
+      <b>jmp is absolute and doesn't link</b>
+      <p>The J-type's 12-bit address goes straight into the PC as <code>{4'b0, addr}</code>. There's no rd field, so nothing is written back.</p>
+      <p class="to"><span>Trade-off</span>No subroutine call or return yet, because there's no jal or jump-to-register.</p>
+    </li>
+    <li>
+      <b>Only the required immediates</b>
+      <p>Nine opcodes (0111 to 1111) stay free. An immediate form of every ALU op (opcode 1xxx = R-type op 0xxx using imm) fits in that space, but it was left out because only the 10 required instructions are graded.</p>
+      <p class="to"><span>Room to grow</span>Free opcodes decode to all-zero control, so adding one later doesn't disturb anything that exists.</p>
+    </li>
+  </ul>
+  <h3>Datapath</h3>
+  <ul class="dec">
+    <li>
+      <b>Single-cycle, 16 bits wide, separate memories</b>
+      <p>Every instruction finishes in one clock. PC, registers, ALU and both memories are 16 bits wide. Instructions and data live in separate 128 × 16 memories (Harvard), so fetch and a load never compete.</p>
+      <p class="to"><span>Trade-off</span>The clock period is set by the slowest path: lw goes ROM → decoder → registers → ALU → data memory → write-back. Addresses above 127 wrap.</p>
+    </li>
+    <li>
+      <b>The ALU does the branch compare</b>
+      <p>cmp.sv was dropped. beq and bne run SUB through the ALU and test <code>zero_loc</code>, which is all an equality check needs.</p>
+      <p class="to"><span>Trade-off</span>The ALU is busy during a branch, so the target needs its own adder (PC + sext(imm)). This is the reverse of the RV32I core, where a comparator did the test and the ALU computed the target.</p>
+    </li>
+    <li>
+      <b>One opcode bit picks branch polarity</b>
+      <p>beq (0100) and bne (0101) set identical control signals. <code>take_loc = Branch &amp; (zero ^ opcode[0])</code> flips the test on the low bit, the same trick RISC-V plays with funct3[0].</p>
+      <p class="to"><span>Trade-off</span>top.sv reads an opcode bit directly, so beq and bne can't swap opcodes without changing that line.</p>
+    </li>
+    <li>
+      <b>Decoder sorts by opcode</b>
+      <p>Opcode 0000 is R-type, 0110 is J-type, and everything else is I-type (<code>t = |opcode</code> splits R from the rest). Fields a format doesn't use are driven to 0.</p>
+      <p class="to"><span>Why zeros</span>jmp's rd comes out as r0, so even a stray write would land on the register that ignores writes.</p>
+    </li>
+    <li>
+      <b>Control is pure decode</b>
+      <p>Control sees only opcode and funct, never data. The branch decision happens in the datapath, in <code>take_loc</code>. Unused opcodes produce all-zero control and behave as no-ops.</p>
+      <p class="to"><span>Why</span>The same rule as the RV32I core. Control signals depend only on the instruction, which keeps them easy to pipeline later.</p>
+    </li>
+    <li>
+      <b>r0 is zero because writes are blocked</b>
+      <p>The register file ignores any write with rd = 0, and reset clears it. No read-side mux is needed.</p>
+      <p class="to"><span>Trade-off</span>r0 is only zero after reset. Before reset, every register reads as x in simulation.</p>
+    </li>
+    <li>
+      <b>Spare paths kept for later</b>
+      <p>The AluSrcA mux can still steer PC into ALU input A, and the write-back mux still has a PC + 1 input. No current instruction uses either.</p>
+      <p class="to"><span>Room to grow</span>A jal or a PC-relative add only needs new control rows, not new wiring.</p>
+    </li>
+    <li>
+      <b>Debug ports and halt</b>
+      <p><code>dbg_pc</code>, <code>dbg_instr</code>, <code>dbg_reg_we</code>, <code>dbg_rd</code> and <code>dbg_wb_data</code> give a testbench everything it needs for a commit log. <code>halt</code> goes high when next PC equals PC, a jump to itself.</p>
+      <p class="to"><span>Watch out</span>halt is combinational and flickers for an instant whenever the PC changes. Sample it on a clock edge, not with <code>wait(halt)</code>.</p>
+    </li>
+  </ul>
+</section>
+
+<section>
+  <h2>From the RV32I core</h2>
+  <p class="prose note">This project started as a single-cycle RV32I core (still described in the repo's README). These are the changes that came with the move to 16 bits.</p>
+  <div class="tbl-wrap">
+    <table class="cmp-t">
+      <thead><tr><th></th><th>RV32I core</th><th>This CPU</th></tr></thead>
+      <tbody>
+        <tr><td>Word size</td><td>32-bit</td><td>16-bit</td></tr>
+        <tr><td>Instructions</td><td>37 (RV32I base)</td><td>10 required, plus 5 extra R-type</td></tr>
+        <tr><td>Registers</td><td>32 × 32, x0 is zero</td><td>16 × 16, r0 is zero</td></tr>
+        <tr><td>Addressing</td><td>bytes, PC + 4</td><td>16-bit words, PC + 1</td></tr>
+        <tr><td>Data memory</td><td>byte, half and word access with load extend</td><td>whole words only</td></tr>
+        <tr><td>Branch compare</td><td>separate comparator, cmp.sv</td><td>ALU SUB plus zero flag</td></tr>
+        <tr><td>Branch target</td><td>ALU, with PC steered in by AluSrcA</td><td>dedicated PC + sext(imm) adder</td></tr>
+        <tr><td>Jumps</td><td>JAL and JALR, both link</td><td>jmp, absolute 12-bit, no link</td></tr>
+        <tr><td>ALU select</td><td><code>{funct7[5], funct3}</code></td><td><code>funct4</code> passed straight through</td></tr>
+        <tr><td>Control inputs</td><td>opcode, funct3, funct7</td><td>opcode, funct4</td></tr>
+        <tr><td>Control signals</td><td>9</td><td>the same 9; AluSrcA and MemRead now unused</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Control signals</h2>
+  <div class="tbl-wrap">
+    <table class="ctl-t">
+      <thead><tr><th>Opcode</th><th>Instruction</th><th>RegWrite</th><th>AluSrc</th><th>AluCtrl</th><th>MemRead</th><th>MemWrite</th><th>MemToReg</th><th>Branch</th><th>Jump</th></tr></thead>
+      <tbody>
+        <tr data-i="add sub sll and"><td>0000</td><td>add sub sll and</td><td class="one">1</td><td class="zero">0</td><td>funct</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td></tr>
+        <tr data-i="lw"><td>0001</td><td>lw</td><td class="one">1</td><td class="one">1</td><td>ADD</td><td class="one">1</td><td class="zero">0</td><td class="one">1</td><td class="zero">0</td><td class="zero">0</td></tr>
+        <tr data-i="sw"><td>0010</td><td>sw</td><td class="zero">0</td><td class="one">1</td><td>ADD</td><td class="zero">0</td><td class="one">1</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td></tr>
+        <tr data-i="addi"><td>0011</td><td>addi</td><td class="one">1</td><td class="one">1</td><td>ADD</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td></tr>
+        <tr data-i="beq"><td>0100</td><td>beq</td><td class="zero">0</td><td class="zero">0</td><td>SUB</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="one">1</td><td class="zero">0</td></tr>
+        <tr data-i="bne"><td>0101</td><td>bne</td><td class="zero">0</td><td class="zero">0</td><td>SUB</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="one">1</td><td class="zero">0</td></tr>
+        <tr data-i="jmp"><td>0110</td><td>jmp</td><td class="zero">0</td><td class="zero">0</td><td class="zero">1111</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="one">1</td></tr>
+        <tr data-i="none"><td>0111–1111</td><td>unused</td><td class="zero">0</td><td class="zero">0</td><td class="zero">1111</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td><td class="zero">0</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">AluSrcA is 0 for every opcode, so ALU input A is always R[rs]. MemRead is driven but data memory has no read-enable port; reads are always on. An unused opcode writes nothing and falls through to PC + 1, so it behaves as a no-op.</p>
+</section>
+
+<section>
+  <div class="grid2">
+    <div>
+      <h2>Next PC</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Jump</th><th>take_loc</th><th>next_PC_loc</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td class="mono zero">x</td><td><code>{4'b0, jal_addr_loc}</code></td><td>jmp</td></tr>
+            <tr><td class="mono">0</td><td class="mono">1</td><td><code>PC + sext(imm)</code></td><td>beq, bne when taken</td></tr>
+            <tr><td class="mono">0</td><td class="mono">0</td><td><code>PC + 1</code></td><td>everything else</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:10px"><code>take_loc = Branch &amp; (zero_loc ^ opcode[0])</code>. beq is 0100 and bne is 0101, so the low opcode bit flips the test.</p>
+    </div>
+    <div>
+      <h2>Write-back</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>MemToReg</th><th>Jump</th><th>wd_loc</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">1</td><td class="mono zero">x</td><td><code>mem_dat_loc</code></td><td>lw</td></tr>
+            <tr><td class="mono">0</td><td class="mono">1</td><td><code>PC + 1</code></td><td>nothing yet</td></tr>
+            <tr><td class="mono">0</td><td class="mono">0</td><td><code>res_loc</code></td><td>R-type, addi</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:10px">The PC + 1 input is ready for a jump-and-link. jmp has no rd field and RegWrite = 0, so today it never writes.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>ALU operations</h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>AluCtrl</th><th>Op</th><th>Res</th><th>Reached by</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">0000</td><td>ADD</td><td><code>A + B</code></td><td>add, addi, lw, sw</td></tr>
+        <tr><td class="mono">0001</td><td>SUB</td><td><code>A − B</code></td><td>sub, beq, bne</td></tr>
+        <tr><td class="mono">0010</td><td>SLL</td><td><code>A &lt;&lt; B[3:0]</code></td><td>sll</td></tr>
+        <tr><td class="mono">0011</td><td>AND</td><td><code>A &amp; B</code></td><td>and</td></tr>
+        <tr><td class="mono">0100</td><td>SLT</td><td><code>signed A &lt; B</code></td><td rowspan="5">R-type with that funct code. Not in the spec, but control passes funct straight through, so they work.</td></tr>
+        <tr><td class="mono">0101</td><td>XOR</td><td><code>A ^ B</code></td></tr>
+        <tr><td class="mono">0110</td><td>SRL</td><td><code>A &gt;&gt; B[4:0]</code></td></tr>
+        <tr><td class="mono">0111</td><td>SRA</td><td><code>A &gt;&gt;&gt; B[4:0]</code></td></tr>
+        <tr><td class="mono">1000</td><td>OR</td><td><code>A | B</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">A is R[rs]. B is R[rt/rd] for R-type and branches, or the zero-extended imm for lw, sw and addi. Any other code gives 0.</p>
+</section>
+
+<section>
+  <h2>Modules</h2>
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr><th>Instance</th><th>Module</th><th>File</th><th>Role</th><th>Ports</th></tr></thead>
+      <tbody>
+        <tr><td><code>ad</code></td><td>PrgCo</td><td class="mono">PC.sv</td><td>Program counter, sync reset to 0. <code>pc_en</code> is tied to 1.</td><td class="mono">next_pc[15:0] → pc[15:0]</td></tr>
+        <tr><td><code>dc</code></td><td>ROME</td><td class="mono">ROM.sv</td><td>128 × 16 instruction ROM, read on <code>PC[6:0]</code>.</td><td class="mono">PC[15:0] → IR[15:0]</td></tr>
+        <tr><td><code>tnt</code></td><td>decoder</td><td class="mono">decoder.sv</td><td>Splits the fields. Opcode 0110 gets only <code>addr</code>; every other opcode gets rd, rs and imm or funct.</td><td class="mono">instruct[15:0] → opcode, rd, rs1, funct4 [3:0], imm[15:0], addr[11:0]</td></tr>
+        <tr><td><code>pnp</code></td><td>control</td><td class="mono">control.sv</td><td>Opcode to nine control signals. Sees only opcode and funct, never data.</td><td class="mono">Opcode, funct4 [3:0] → RegWrite, AluSrc, AluSrcA, AluCtrl[3:0], MemRead, MemWrite, MemToReg, Branch, Jump</td></tr>
+        <tr><td><code>npn</code></td><td>registers</td><td class="mono">registers.sv</td><td>16 × 16, two combinational reads, one clocked write. Writes to r0 are blocked.</td><td class="mono">rs1, rs2, rd [3:0], wd[15:0], we → rd1, rd2 [15:0]</td></tr>
+        <tr><td><code>tsmc</code></td><td>ALU</td><td class="mono">ALU.sv</td><td>Nine operations selected by AluCtrl.</td><td class="mono">OpA, OpB [15:0], ALUCtrl[3:0] → Res[15:0]</td></tr>
+        <tr><td><code>meme</code></td><td>memory</td><td class="mono">data_mem.sv</td><td>128 × 16 data RAM on <code>addr[6:0]</code>. Combinational read, clocked write.</td><td class="mono">addr, dat [15:0], write_ena → mem_dat[15:0]</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Glue logic in top.sv</h2>
+  <p class="prose note">Everything outside the seven instances is these assigns. Each one is a mux, adder or gate in the drawing above.</p>
+<pre><code>assign pc_en_loc=1'b1;
+assign PC_plus1_loc=PC_loc+16'd1;
+assign OpA_loc=AluSrcA_loc?PC_loc:rd1_loc;
+assign OpB_loc=AluSrc_loc?imm_loc:rd2_loc;
+assign zero_loc=(res_loc==16'd0);
+assign take_loc=Branch_loc&amp;(zero_loc^opcode_loc[0]);     //BEQ=0100 BNE=0101, opcode[0] flips the condition
+assign br_tgt_loc=PC_loc+{{12{imm_loc[3]}},imm_loc[3:0]};  //ALU is busy comparing, so branches get their own adder
+assign next_PC_loc=Jump_loc?{4'b0,jal_addr_loc}:take_loc?br_tgt_loc:PC_plus1_loc;
+assign addr_loc=res_loc;
+assign dat_loc=rd2_loc;
+assign wd_loc=MemToReg_loc?mem_dat_loc:Jump_loc?PC_plus1_loc:res_loc;
+
+assign halt=(next_PC_loc==PC_loc);      //jump-to-self</code></pre>
+</section>
+
+<section>
+  <h2>Open items</h2>
+  <p class="prose">In <code>registers.sv</code> the reset loop runs <code>i&lt;15</code>, so r15 isn't cleared on reset. Changing it to <code>i&lt;16</code> covers all 16 registers.</p>
+</section>
+
+</div>
+
+<script>
+(function(){
+  var K = {
+    R:   'fetch ctl npc pc1 rs rt rdw rd1 rd2b rf alu res_wb wd',
+    lw:  'fetch ctl npc pc1 rs rdw rd1 imm rf alu res_mem mem mem_wb wd',
+    sw:  'fetch ctl npc pc1 rs rt rd1 imm rf alu res_mem mem dat',
+    addi:'fetch ctl npc pc1 rs rdw rd1 imm rf alu res_wb wd',
+    br:  'fetch ctl npc pc1 rs rt rd1 rd2b rf alu zero take immbr br',
+    jmp: 'fetch ctl npc jaddr'
+  };
+  function C(rw, src, alu, mw, m2r, j, b, op0){
+    return {RegWrite:rw, AluSrcA:0, AluSrc:src, AluCtrl:alu, MemWrite:mw, MemToReg:m2r, Jump:j, Branch:b, op0:op0};
+  }
+  var RT = 'R-type reads both registers. ALU input A is R[rs] and input B is R[rt/rd]; funct picks the operation and the result goes back into rt/rd.';
+  var I = {
+    add: {fmt:'R', hex:'0120', rtl:'R1 ← R2 + R1', keys:K.R, ctl:C(1,0,'ADD',0,0,0,0,0), txt:RT},
+    sub: {fmt:'R', hex:'0211', rtl:'R2 ← R1 − R2', keys:K.R, ctl:C(1,0,'SUB',0,0,0,0,0), txt:RT+' The order is rs minus rt/rd.'},
+    sll: {fmt:'R', hex:'0322', rtl:'R3 ← R2 << R3[3:0]', keys:K.R, ctl:C(1,0,'SLL',0,0,0,0,0), txt:RT+' The shift amount is the low 4 bits of R[rt/rd].'},
+    and: {fmt:'R', hex:'0413', rtl:'R4 ← R1 & R4', keys:K.R, ctl:C(1,0,'AND',0,0,0,0,0), txt:RT},
+    lw:  {fmt:'I', hex:'1304', rtl:'R3 ← M[R0 + 4]', keys:K.lw, ctl:C(1,1,'ADD',0,1,0,0,1), txt:'The ALU adds R[rs] and the zero-extended imm to make the address. MemToReg = 1 sends the memory output back into rt/rd.'},
+    sw:  {fmt:'I', hex:'2204', rtl:'M[R0 + 4] ← R2', keys:K.sw, ctl:C(0,1,'ADD',1,0,0,0,0), txt:'Same address math as lw. R[rt/rd] leaves read port 2 on dat_loc and MemWrite = 1 stores it on the clock edge. Nothing is written back.'},
+    addi:{fmt:'I', hex:'3105', rtl:'R1 ← R0 + 5', keys:K.addi, ctl:C(1,1,'ADD',0,0,0,0,1), txt:'R[rs] plus the zero-extended imm (0 to 15), written into rt/rd.'},
+    beq: {fmt:'I', hex:'4232', rtl:'if R3 = R2: PC ← PC + 2', keys:K.br, ctl:C(0,0,'SUB',0,0,0,1,0), signed:true, txt:'The ALU computes R[rs] − R[rt/rd] and zero_loc goes high on a match. The branch adder builds PC + sext(imm) at the same time, and take_loc picks it over PC + 1.'},
+    bne: {fmt:'I', hex:'567F', rtl:'if R7 ≠ R6: PC ← PC − 1', keys:K.br, ctl:C(0,0,'SUB',0,0,0,1,1), signed:true, txt:'Same hardware as beq. opcode[0] = 1 inverts the test, so the branch is taken when zero_loc is low. This example loops back one instruction.'},
+    jmp: {fmt:'J', hex:'600F', rtl:'PC ← 0x00F', keys:K.jmp, ctl:C(0,0,'x',0,0,1,0,0), txt:'Only fetch and the address field matter: next_PC_loc = {4\'b0, addr}. The register file, ALU and data memory sit idle.'}
+  };
+  var FN = {add:'ADD', sub:'SUB', sll:'SLL', and:'AND'};
+
+  var svg = document.getElementById('dg');
+  var ks = svg.querySelectorAll('.k');
+  var sigs = svg.querySelectorAll('[data-sig]');
+  var cs = svg.querySelectorAll('[data-cs]');
+  var btns = document.querySelectorAll('.picker button');
+  var rows = document.querySelectorAll('.ctl-t tbody tr');
+  var el = function(id){ return document.getElementById(id); };
+  sigs.forEach(function(s){ s.dataset.base = s.textContent; });
+
+  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  function bits(name, d){
+    var b = parseInt(d.hex, 16).toString(2).padStart(16, '0');
+    var g = d.fmt === 'J'
+      ? [['opcode',0,4],['address',4,16]]
+      : [['opcode',0,4],['rt/rd',4,8],['rs',8,12],[d.fmt === 'R' ? 'funct' : 'imm',12,16]];
+    return g.map(function(f){
+      var v = b.slice(f[1], f[2]), n = parseInt(v, 2), lab;
+      if (f[0] === 'opcode') lab = 'opcode';
+      else if (f[0] === 'rt/rd' || f[0] === 'rs') lab = f[0] + ' = R' + n;
+      else if (f[0] === 'funct') lab = 'funct = ' + FN[name];
+      else if (f[0] === 'imm') lab = 'imm = ' + (d.signed && n > 7 ? n - 16 : n);
+      else lab = 'addr = 0x' + n.toString(16).toUpperCase().padStart(3, '0');
+      return '<span class="bg" style="--s:' + (f[2] - f[1]) + '"><span class="bv">' + v + '</span><span class="bl">' + esc(lab) + '</span></span>';
+    }).join('');
+  }
+
+  function sigText(s, c){
+    if (s === 'WB') return 'MemToReg = ' + c.MemToReg + ' · Jump = ' + c.Jump;
+    if (s === 'op0') return 'opcode[0] = ' + c.op0;
+    return s + ' = ' + c[s];
+  }
+  function sigLow(s, c){
+    if (s === 'WB') return !c.MemToReg && !c.Jump;
+    if (s === 'AluCtrl') return c.AluCtrl === 'x';
+    return c[s] === 0;
+  }
+
+  function select(name){
+    var d = I[name] || null;
+    btns.forEach(function(b){ b.setAttribute('aria-pressed', String(b.dataset.i === (d ? name : 'all'))); });
+    svg.classList.toggle('focus', !!d);
+    var on = d ? d.keys.split(' ') : null;
+    ks.forEach(function(e){
+      if (!on){ e.classList.remove('on','off'); return; }
+      var hit = e.dataset.k.split(' ').some(function(k){ return on.indexOf(k) !== -1; });
+      e.classList.toggle('on', hit);
+      e.classList.toggle('off', !hit);
+    });
+    sigs.forEach(function(s){ s.textContent = d ? sigText(s.dataset.sig, d.ctl) : s.dataset.base; });
+    cs.forEach(function(p){ p.classList.toggle('lo', !!d && sigLow(p.dataset.cs, d.ctl)); });
+    sigs.forEach(function(s){ s.classList.toggle('lo', !!d && s.dataset.sig !== 'op0' && sigLow(s.dataset.sig, d.ctl)); });
+    rows.forEach(function(r){ r.classList.toggle('sel', !!d && r.dataset.i.split(' ').indexOf(name) !== -1); });
+
+    el('p-mn').textContent = d ? name : 'All wires';
+    el('p-type').textContent = d ? d.fmt + '-type' : '';
+    el('p-hex').textContent = d ? 'e.g. 0x' + d.hex : '';
+    el('p-bits').innerHTML = d ? bits(name, d) : '';
+    el('p-rtl').textContent = d ? d.rtl : '';
+    el('p-txt').textContent = d ? d.txt : 'Every wire in top.sv. Pick an instruction to light up the wires it uses. The blue control labels switch to the values that instruction sets.';
+  }
+
+  btns.forEach(function(b){ b.addEventListener('click', function(){ select(b.dataset.i); }); });
+  select('all');
+})();
+</script>
+
+</body></html>
